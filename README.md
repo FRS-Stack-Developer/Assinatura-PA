@@ -79,7 +79,9 @@ e arquivos sejam servidos sem alteração.
 - A fonte Rawline é a fonte institucional do padrão digital de governo,
   embutida em WOFF2 para garantir renderização idêntica no canvas. Só as cinco
   variantes efetivamente usadas no desenho estão no repositório.
-- Cor do texto, alinhamento e tamanho de exportação são fixos, por decisão de
+- A largura da imagem é automática: termina logo depois do texto mais comprido
+  (`contentWidth`, `RIGHT_PAD` e `minW` no `app.js`); a altura é fixa.
+- Cor do texto, alinhamento e altura de exportação são fixos, por decisão de
   padronização: a assinatura sai igual para todo mundo. Os valores estão em
   `INK` e `EXPORT_MODES`, no `app.js`.
 - O histórico deste projeto começou como um único `index.html` de 2,3 MB com
