@@ -217,13 +217,14 @@ const EXPORT_BASE = 0.70;
 // narrow -> estreita a AREA DE DESENHO antes de exportar. Nao deforma nada:
 //           o texto e o escudo mantem o tamanho, sobra menos espaco vazio a direita.
 // A LARGURA e automatica (ver contentWidth): a assinatura termina logo depois
-// do texto mais comprido. A altura e fixa: no modelo Classico sao 93 px na tela.
-// Historico: scale 0.50 = 706x190 px; 0.35 = 494x133 px; 0.245 = 346x93 px.
+// do texto mais comprido. A altura e fixa: no modelo Classico sao 133 px na tela.
+// Historico (Classico, largura maxima): 0.50 = 706x190 px; 0.35 = 494x133 px
+// (atual); 0.245 = 346x93 px, achado pequeno demais.
 // Para oferecer outro tamanho no futuro, basta acrescentar uma entrada aqui e
 // um grupo de botoes com id="expsize" no index.html (um botao por entrada,
 // com data-v igual a chave); o resto do codigo ja lida com isso.
 const EXPORT_MODES = {
-  padrao: { label: 'Padrão', scale: 0.245, narrow: 1 }
+  padrao: { label: 'Padrão', scale: 0.35, narrow: 1 }
 };
 function expMode(){ return EXPORT_MODES[state.expmode] || EXPORT_MODES.padrao; }
 // area de desenho efetiva do layout no modo escolhido
