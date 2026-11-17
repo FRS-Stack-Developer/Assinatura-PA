@@ -213,31 +213,62 @@ function enterApp(){
 const EXPORT_BASE = 0.70;
 
 // ---------- tamanhos de exportacao ----------
-// scale   -> fator aplicado sobre o tamanho do layout (junto com EXPORT_BASE)
-// squeeze -> fator aplicado SO na largura (1 = mantem a proporcao original)
-// No modelo Classico (2016x544) isto resulta em 706x190 e 599x190.
 // scale  -> fator aplicado sobre o tamanho do layout (junto com EXPORT_BASE)
-// narrow  -> estreita a AREA DE DESENHO antes de exportar. Nao deforma nada:
-//            o texto e o escudo mantem o tamanho, sobra menos espaco vazio a direita.
-// No modelo Classico (2016x544) isto resulta em 706x190 e 599x190.
-// Tamanho unico de exportacao, para padronizar a assinatura. No modelo
-// Classico (2016x544) resulta em 706x190 px.
+// narrow -> estreita a AREA DE DESENHO antes de exportar. Nao deforma nada:
+//           o texto e o escudo mantem o tamanho, sobra menos espaco vazio a direita.
+// A LARGURA e automatica (ver contentWidth): a assinatura termina logo depois
+// do texto mais comprido. A altura e fixa: no modelo Classico sao 93 px na tela.
+// Historico: scale 0.50 = 706x190 px; 0.35 = 494x133 px; 0.245 = 346x93 px.
 // Para oferecer outro tamanho no futuro, basta acrescentar uma entrada aqui e
 // um grupo de botoes com id="expsize" no index.html (um botao por entrada,
 // com data-v igual a chave); o resto do codigo ja lida com isso.
 const EXPORT_MODES = {
-  padrao: { label: 'Padrão', scale: 0.50, narrow: 1 }
+  padrao: { label: 'Padrão', scale: 0.245, narrow: 1 }
 };
 function expMode(){ return EXPORT_MODES[state.expmode] || EXPORT_MODES.padrao; }
 // area de desenho efetiva do layout no modo escolhido
 function expFrame(L){
   const m = expMode();
-  return { w: Math.max(1, Math.round(L.w * m.narrow)), h: L.h, render: L.render, label: L.label };
+  const w = contentWidth(L) * m.narrow;
+  return { w: Math.max(1, Math.round(w)), h: L.h, render: L.render, label: L.label };
 }
+
+// ---------- largura automatica ----------
+// Cada layout informa quanto espaco o conteudo atual ocupa (need). A area de
+// desenho vai ate ali + RIGHT_PAD, respeitando um minimo (minW) para o desenho
+// do modelo nao ficar cortado. A largura de LAYOUTS (w) continua sendo o
+// maximo: se o texto passar dela, a fonte e reduzida como antes (fitRatio).
+const RIGHT_PAD = 70;
+function textW(t, font){
+  if(!t) return 0;
+  ctx.font = font;
+  return ctx.measureText(t).width;
+}
+function maxTextW(texts, font){ return Math.max(0, ...texts.map(t => textW(t, font))); }
+function shieldBoxW(img, boxW, boxH){
+  if(!img) return 0;
+  return img.width * Math.min(boxW/img.width, boxH/img.height);
+}
+function contentWidth(L){
+  if(!L.need) return L.w;
+  const n = Math.ceil(L.need(L.h) + RIGHT_PAD);
+  return Math.min(L.w, Math.max(L.minW || 0, n));
+}
+function addrs(){ return [state.end1, state.end2, state.end3]; }
 function expSize(L){
   const F = expFrame(L), k = expMode().scale * EXPORT_BASE;
   return { w: Math.max(1, Math.round(F.w * k)), h: Math.max(1, Math.round(F.h * k)) };
 }
+
+// fontes de cada modelo (usadas no desenho e no calculo da largura)
+const FONT = {
+  classico: { N:'italic 600 62px Rawline, sans-serif', F:'italic 500 52px Rawline, sans-serif',
+              A:'italic 400 43px Rawline, sans-serif' },
+  clara:    { N:'700 60px Rawline, sans-serif', F:'italic 500 48px Rawline, sans-serif',
+              A:'400 42px Rawline, sans-serif' },
+  central:  { N:'italic 600 60px Rawline, sans-serif', F:'italic 500 48px Rawline, sans-serif',
+              A:'400 40px Rawline, sans-serif' }
+};
 
 const images = {};       // id -> HTMLImageElement
 let bgImg = null;
@@ -248,11 +279,32 @@ const cv = document.getElementById('cv');
 let ctx = cv.getContext('2d');   // redirecionado durante a exportação
 
 // ---------- layout definitions ----------
+// w = largura maxima; minW = largura minima (Classico: as listras do fundo
+// terminam em x=1104); need = largura ocupada pelo conteudo atual.
 const LAYOUTS = {
-  classico: { w:2016, h:544, label:'Clássico', render:renderClassico },
-  clara:    { w:2016, h:520, label:'Faixa clara', render:renderClara },
-  central:  { w:1500, h:820, label:'Centralizado', render:renderCentral }
+  classico: { w:2016, h:544, minW:1180, label:'Clássico', render:renderClassico, need:needClassico },
+  clara:    { w:2016, h:520, minW:1000, label:'Faixa clara', render:renderClara, need:needClara },
+  central:  { w:1500, h:820, minW:760,  label:'Centralizado', render:renderCentral, need:needCentral }
 };
+function needClassico(){
+  const f = FONT.classico;
+  return Math.max(60 + textW(state.nome, f.N), 62 + textW(state.funcao, f.F),
+                  430 + maxTextW(addrs(), f.A));
+}
+function claraTextX(H){
+  const sw = shieldBoxW(curShieldImg(), 340*state.shscale, (H*0.74)*state.shscale);
+  return Math.max(40 + sw + 40, 420) + 40;
+}
+function needClara(H){
+  const f = FONT.clara;
+  return claraTextX(H) + Math.max(textW(state.nome, f.N), textW(state.funcao, f.F),
+                                  maxTextW(addrs(), f.A));
+}
+function needCentral(){
+  const f = FONT.central;
+  return Math.max(textW(state.nome, f.N), textW(state.funcao, f.F), maxTextW(addrs(), f.A))
+         + 180 - RIGHT_PAD;
+}
 
 // ---------- ajuste automatico de texto ----------
 // Impede que nome/funcao/endereco sejam cortados quando passam da largura
@@ -301,15 +353,16 @@ function drawShieldFit(img, boxX, boxY, boxW, boxH, align){
 
 function renderClassico(W,H){
   // fundo: imagem padrao do modelo, com reserva em cor solida
-  if(bgImg) ctx.drawImage(bgImg,0,0,W,H);
+  // desenhado na largura original e recortado pela area de desenho, para as
+  // listras nao deformarem quando a largura muda
+  if(bgImg) ctx.drawImage(bgImg,0,0,LAYOUTS.classico.w,H);
   else { ctx.fillStyle='#B2A582'; ctx.fillRect(0,0,W,H); }
   const c=inks(), sc = state.shscale;
   // shield lower-left
   drawShieldFit(curShieldImg(), 34, H*0.30, 360*sc, (H*0.66)*sc, 'left');
   // name + funcao top-left
   ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-  const fN='italic 600 62px Rawline, sans-serif', fF='italic 500 52px Rawline, sans-serif',
-        fA='italic 400 43px Rawline, sans-serif';
+  const {N:fN, F:fF, A:fA} = FONT.classico;
   const ax=430, ay=292, lh=57;
   const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-62-24);
   const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-ax-24);
@@ -339,8 +392,7 @@ function renderClara(W,H){
   ctx.beginPath(); ctx.moveTo(dx, H*0.20); ctx.lineTo(dx, H*0.80); ctx.stroke();
   const tx = dx+40;
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-  const fN='700 60px Rawline, sans-serif', fF='italic 500 48px Rawline, sans-serif',
-        fA='400 42px Rawline, sans-serif';
+  const {N:fN, F:fF, A:fA} = FONT.clara;
   const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-tx-40);
   const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-tx-40);
   ctx.fillStyle=c.name;
@@ -362,8 +414,7 @@ function renderCentral(W,H){
   const c=inks(), sc=state.shscale;
   drawShieldFit(curShieldImg(), W/2-190*sc, 40, 380*sc, 360*sc, 'center');
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  const fN='italic 600 60px Rawline, sans-serif', fF='italic 500 48px Rawline, sans-serif',
-        fA='400 40px Rawline, sans-serif';
+  const {N:fN, F:fF, A:fA} = FONT.central;
   const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-180);
   const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-180);
   ctx.fillStyle=c.name;
@@ -391,7 +442,7 @@ function draw(){
   L.render(L.w,L.h);
   const e = expSize(L0);
   document.getElementById('cap').textContent =
-    L.label + ' — arquivo salvo: ' + e.w + '×' + e.h + ' px';
+    L.label + ': ' + e.w + '×' + e.h + ' px na tela';
   markDirty();
 }
 
@@ -463,9 +514,10 @@ function buildUI(){
 
 // Canvas final: a assinatura é REDESENHADA na resolução de saída
 // (texto rasterizado no tamanho final = letras nítidas, em vez de imagem encolhida).
-function exportCanvas(){
+function exportCanvas(density){
   const L = expFrame(LAYOUTS[state.layout]);
-  const { w, h } = expSize(LAYOUTS[state.layout]);
+  const e = expSize(LAYOUTS[state.layout]), d = density || 1;
+  const w = Math.round(e.w * d), h = Math.round(e.h * d);
   if(w === L.w && h === L.h) return cv;
   const c2 = document.createElement('canvas');
   c2.width = w; c2.height = h;
