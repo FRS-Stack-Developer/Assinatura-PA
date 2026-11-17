@@ -212,52 +212,66 @@ function enterApp(){
 // 100% da exportacao = 70% do tamanho em que a assinatura e desenhada
 const EXPORT_BASE = 0.70;
 
-// ---------- tamanhos de exportacao ----------
-// scale  -> fator aplicado sobre o tamanho do layout (junto com EXPORT_BASE)
-// narrow -> estreita a AREA DE DESENHO antes de exportar. Nao deforma nada:
-//           o texto e o escudo mantem o tamanho, sobra menos espaco vazio a direita.
-// A LARGURA e automatica (ver contentWidth): a assinatura termina logo depois
-// do texto mais comprido. A altura e fixa: no modelo Classico sao 133 px na tela.
-// Historico (Classico, largura maxima): 0.50 = 706x190 px; 0.35 = 494x133 px
-// (atual); 0.245 = 346x93 px, achado pequeno demais.
+// ---------- tamanho de exportacao ----------
+// scale -> fator aplicado sobre o tamanho do layout (junto com EXPORT_BASE).
+// Historico: 0.50 = tamanho original; 0.35 e 0.245 foram testados e ficaram
+// grande/pequeno demais; 0.40 = 20% menor que o original (atual).
+// O recorte e automatico (ver frameOf): a imagem termina logo em volta do
+// conteudo, com a folga PAD.
 // Para oferecer outro tamanho no futuro, basta acrescentar uma entrada aqui e
 // um grupo de botoes com id="expsize" no index.html (um botao por entrada,
 // com data-v igual a chave); o resto do codigo ja lida com isso.
 const EXPORT_MODES = {
-  padrao: { label: 'Padrão', scale: 0.35, narrow: 1 }
+  padrao: { label: 'Padrão', scale: 0.40 }
 };
 function expMode(){ return EXPORT_MODES[state.expmode] || EXPORT_MODES.padrao; }
-// area de desenho efetiva do layout no modo escolhido
-function expFrame(L){
-  const m = expMode();
-  const w = contentWidth(L) * m.narrow;
-  return { w: Math.max(1, Math.round(w)), h: L.h, render: L.render, label: L.label };
-}
 
-// ---------- largura automatica ----------
-// Cada layout informa quanto espaco o conteudo atual ocupa (need). A area de
-// desenho vai ate ali + RIGHT_PAD, respeitando um minimo (minW) para o desenho
-// do modelo nao ficar cortado. A largura de LAYOUTS (w) continua sendo o
-// maximo: se o texto passar dela, a fonte e reduzida como antes (fitRatio).
-const RIGHT_PAD = 70;
-function textW(t, font){
-  if(!t) return 0;
-  ctx.font = font;
-  return ctx.measureText(t).width;
-}
-function maxTextW(texts, font){ return Math.max(0, ...texts.map(t => textW(t, font))); }
-function shieldBoxW(img, boxW, boxH){
-  if(!img) return 0;
-  return img.width * Math.min(boxW/img.width, boxH/img.height);
-}
-function contentWidth(L){
-  if(!L.need) return L.w;
-  const n = Math.ceil(L.need(L.h) + RIGHT_PAD);
-  return Math.min(L.w, Math.max(L.minW || 0, n));
-}
+// ---------- recorte automatico ----------
+// Cada layout desenha nas suas coordenadas de sempre (LAYOUTS: w x h), que
+// tambem limitam o texto: se passar da largura, a fonte e reduzida (fitRatio).
+// frame(W,H) devolve o retangulo {x, y, w, h} que vai para a imagem: o
+// conteudo atual (escudo, textos e filetes) com a folga PAD em volta. Fundo e
+// faixas decorativas sao desenhados sobre esse retangulo.
+const PAD = 32;
 function addrs(){ return [state.end1, state.end2, state.end3]; }
+function shieldRect(img, boxX, boxY, boxW, boxH, align){
+  if(!img) return null;
+  const s = Math.min(boxW/img.width, boxH/img.height);
+  const w = img.width*s, h = img.height*s;
+  let x = boxX;
+  if(align==='center') x = boxX + (boxW-w)/2;
+  else if(align==='right') x = boxX + (boxW-w);
+  return { x, y: boxY + (boxH-h)/2, w, h };
+}
+// caixa ocupada pelas linhas [texto, fonte, x, baseline, alinhamento, cor]
+function textBox(lines){
+  const b = { x0:Infinity, y0:Infinity, x1:-Infinity, y1:-Infinity };
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  lines.forEach(([t, font, x, y, align]) => {
+    if(!t) return;
+    ctx.font = font;
+    const m = ctx.measureText(t);
+    const w = Math.max(m.width, m.actualBoundingBoxRight || 0);
+    const left = align === 'center' ? x - w/2 : x;
+    b.x0 = Math.min(b.x0, left);  b.x1 = Math.max(b.x1, left + w);
+    b.y0 = Math.min(b.y0, y - m.actualBoundingBoxAscent);
+    b.y1 = Math.max(b.y1, y + m.actualBoundingBoxDescent);
+  });
+  return b;
+}
+function addRect(b, r){
+  if(!r) return b;
+  b.x0 = Math.min(b.x0, r.x);        b.y0 = Math.min(b.y0, r.y);
+  b.x1 = Math.max(b.x1, r.x + r.w);  b.y1 = Math.max(b.y1, r.y + r.h);
+  return b;
+}
+function frameOf(L){
+  const f = L.frame ? L.frame(L.w, L.h) : { x:0, y:0, w:L.w, h:L.h };
+  const x = Math.floor(f.x), y = Math.floor(f.y);
+  return { x, y, w: Math.max(1, Math.ceil(f.x + f.w) - x), h: Math.max(1, Math.ceil(f.y + f.h) - y) };
+}
 function expSize(L){
-  const F = expFrame(L), k = expMode().scale * EXPORT_BASE;
+  const F = frameOf(L), k = expMode().scale * EXPORT_BASE;
   return { w: Math.max(1, Math.round(F.w * k)), h: Math.max(1, Math.round(F.h * k)) };
 }
 
@@ -280,32 +294,12 @@ const cv = document.getElementById('cv');
 let ctx = cv.getContext('2d');   // redirecionado durante a exportação
 
 // ---------- layout definitions ----------
-// w = largura maxima; minW = largura minima (Classico: as listras do fundo
-// terminam em x=1104); need = largura ocupada pelo conteudo atual.
+// w x h = coordenadas do desenho (e limite para o texto); frame = recorte.
 const LAYOUTS = {
-  classico: { w:2016, h:544, minW:1180, label:'Clássico', render:renderClassico, need:needClassico },
-  clara:    { w:2016, h:520, minW:1000, label:'Faixa clara', render:renderClara, need:needClara },
-  central:  { w:1500, h:820, minW:760,  label:'Centralizado', render:renderCentral, need:needCentral }
+  classico: { w:2016, h:544, label:'Clássico', render:renderClassico, frame:frameClassico },
+  clara:    { w:2016, h:520, label:'Faixa clara', render:renderClara, frame:frameClara },
+  central:  { w:1500, h:820, label:'Centralizado', render:renderCentral, frame:frameCentral }
 };
-function needClassico(){
-  const f = FONT.classico;
-  return Math.max(60 + textW(state.nome, f.N), 62 + textW(state.funcao, f.F),
-                  430 + maxTextW(addrs(), f.A));
-}
-function claraTextX(H){
-  const sw = shieldBoxW(curShieldImg(), 340*state.shscale, (H*0.74)*state.shscale);
-  return Math.max(40 + sw + 40, 420) + 40;
-}
-function needClara(H){
-  const f = FONT.clara;
-  return claraTextX(H) + Math.max(textW(state.nome, f.N), textW(state.funcao, f.F),
-                                  maxTextW(addrs(), f.A));
-}
-function needCentral(){
-  const f = FONT.central;
-  return Math.max(textW(state.nome, f.N), textW(state.funcao, f.F), maxTextW(addrs(), f.A))
-         + 180 - RIGHT_PAD;
-}
 
 // ---------- ajuste automatico de texto ----------
 // Impede que nome/funcao/endereco sejam cortados quando passam da largura
@@ -341,107 +335,111 @@ function applyTheme(){
   else document.body.dataset.theme = state.theme;
   markDirty();
 }
-function drawShieldFit(img, boxX, boxY, boxW, boxH, align){
-  if(!img) return {x:boxX,y:boxY,w:0,h:0};
-  const s = Math.min(boxW/img.width, boxH/img.height);
-  const w = img.width*s, h = img.height*s;
-  let x = boxX, y = boxY + (boxH-h)/2;
-  if(align==='center') x = boxX + (boxW-w)/2;
-  else if(align==='right') x = boxX + (boxW-w);
-  ctx.drawImage(img, x, y, w, h);
-  return {x,y,w,h};
+// desenha escudo e linhas de texto calculados por xxxGeom()
+function drawGeom(g){
+  const c = inks(), img = curShieldImg();
+  if(g.shield && img) ctx.drawImage(img, g.shield.x, g.shield.y, g.shield.w, g.shield.h);
+  ctx.textBaseline = 'alphabetic';
+  g.lines.forEach(([t, font, x, y, align, role]) => {
+    if(!t) return;
+    ctx.textAlign = align; ctx.font = font; ctx.fillStyle = c[role];
+    ctx.fillText(t, x, y);
+  });
 }
 
-function renderClassico(W,H){
-  // fundo: imagem padrao do modelo, com reserva em cor solida
-  // desenhado na largura original e recortado pela area de desenho, para as
-  // listras nao deformarem quando a largura muda
-  if(bgImg) ctx.drawImage(bgImg,0,0,LAYOUTS.classico.w,H);
-  else { ctx.fillStyle='#B2A582'; ctx.fillRect(0,0,W,H); }
-  const c=inks(), sc = state.shscale;
-  // shield lower-left
-  drawShieldFit(curShieldImg(), 34, H*0.30, 360*sc, (H*0.66)*sc, 'left');
-  // name + funcao top-left
-  ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-  const {N:fN, F:fF, A:fA} = FONT.classico;
-  const ax=430, ay=292, lh=57;
-  const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-62-24);
-  const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-ax-24);
-  ctx.fillStyle=c.name;
-  ctx.font=fitFont(fN,rN);
-  ctx.fillText(state.nome, 60, 92);
-  ctx.fillStyle=c.sub;
-  ctx.font=fitFont(fF,rN);
-  ctx.fillText(state.funcao, 62, 156);
-  // address to the right of shield (kept above the diagonal bars)
-  ctx.fillStyle=c.addr;
-  ctx.font=fitFont(fA,rA);
-  ctx.fillText(state.end1, ax, ay);
-  ctx.fillText(state.end2, ax, ay+lh);
-  ctx.fillText(state.end3, ax, ay+lh*2);
+// --- Classico: fundo com listras; recorta so a direita (cima, baixo e
+// esquerda fazem parte do desenho do fundo)
+function classicoGeom(W, H){
+  const { N, F, A } = FONT.classico, sc = state.shscale, ax = 430, ay = 292, lh = 57;
+  const rN = fitRatio([[state.nome, N], [state.funcao, F]], W-62-24);
+  const rA = fitRatio(addrs().map(t => [t, A]), W-ax-24);
+  const fN = fitFont(N, rN), fF = fitFont(F, rN), fA = fitFont(A, rA);
+  return {
+    shield: shieldRect(curShieldImg(), 34, H*0.30, 360*sc, (H*0.66)*sc, 'left'),
+    lines: [[state.nome, fN, 60, 92, 'left', 'name'], [state.funcao, fF, 62, 156, 'left', 'sub'],
+            [state.end1, fA, ax, ay, 'left', 'addr'], [state.end2, fA, ax, ay+lh, 'left', 'addr'],
+            [state.end3, fA, ax, ay+lh*2, 'left', 'addr']]
+  };
+}
+function frameClassico(W, H){
+  const b = textBox(classicoGeom(W, H).lines);
+  const right = isFinite(b.x1) ? b.x1 + 60 : W;     // 60 = mesma margem do nome a esquerda
+  return { x:0, y:0, w: Math.min(W, Math.max(1180, right)), h:H };   // listras terminam em x=1104
+}
+function renderClassico(W, H, Fr){
+  // fundo na largura original, recortado pelo frame (as listras nao deformam)
+  if(bgImg) ctx.drawImage(bgImg, 0, 0, W, H);
+  else { ctx.fillStyle = '#B2A582'; ctx.fillRect(Fr.x, Fr.y, Fr.w, Fr.h); }
+  drawGeom(classicoGeom(W, H));
 }
 
-function renderClara(W,H){
-  ctx.fillStyle='#F1EDE3'; ctx.fillRect(0,0,W,H);
-  // gold bottom accent
-  ctx.fillStyle='#A8935B'; ctx.fillRect(0,H-14,W,14);
-  const c=inks(), sc=state.shscale;
-  const sb=drawShieldFit(curShieldImg(), 40, H*0.12, 340*sc, (H*0.74)*sc, 'left');
-  // vertical divider
-  const dx = Math.max(sb.x+sb.w+40, 420);
-  ctx.strokeStyle='#A8935B'; ctx.lineWidth=4;
-  ctx.beginPath(); ctx.moveTo(dx, H*0.20); ctx.lineTo(dx, H*0.80); ctx.stroke();
-  const tx = dx+40;
-  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-  const {N:fN, F:fF, A:fA} = FONT.clara;
-  const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-tx-40);
-  const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-tx-40);
-  ctx.fillStyle=c.name;
-  ctx.font=fitFont(fN,rN);
-  ctx.fillText(state.nome, tx, 150);
-  ctx.fillStyle=c.sub;
-  ctx.font=fitFont(fF,rN);
-  ctx.fillText(state.funcao, tx, 214);
-  ctx.fillStyle=c.addr;
-  ctx.font=fitFont(fA,rA);
-  const ay=308, lh=60;
-  ctx.fillText(state.end1, tx, ay);
-  ctx.fillText(state.end2, tx, ay+lh);
-  ctx.fillText(state.end3, tx, ay+lh*2);
+// --- Faixa clara: recorte justo nos quatro lados, faixa dourada embaixo
+const BAR = 14;
+function claraGeom(W, H){
+  const { N, F, A } = FONT.clara, sc = state.shscale;
+  const shield = shieldRect(curShieldImg(), 40, H*0.12, 340*sc, (H*0.74)*sc, 'left');
+  const sb = shield || { x:40, y:H*0.12, w:0, h:0 };
+  const dx = Math.max(sb.x + sb.w + 40, 420), tx = dx + 40, ay = 308, lh = 60;
+  const rN = fitRatio([[state.nome, N], [state.funcao, F]], W-tx-40);
+  const rA = fitRatio(addrs().map(t => [t, A]), W-tx-40);
+  const fN = fitFont(N, rN), fF = fitFont(F, rN), fA = fitFont(A, rA);
+  return {
+    shield, dx, div: [H*0.20, H*0.80],
+    lines: [[state.nome, fN, tx, 150, 'left', 'name'], [state.funcao, fF, tx, 214, 'left', 'sub'],
+            [state.end1, fA, tx, ay, 'left', 'addr'], [state.end2, fA, tx, ay+lh, 'left', 'addr'],
+            [state.end3, fA, tx, ay+lh*2, 'left', 'addr']]
+  };
+}
+function frameClara(W, H){
+  const g = claraGeom(W, H), b = textBox(g.lines);
+  addRect(b, g.shield);
+  addRect(b, { x: g.dx-2, y: g.div[0], w: 4, h: g.div[1]-g.div[0] });
+  return { x: b.x0-PAD, y: b.y0-PAD, w: b.x1-b.x0 + 2*PAD, h: b.y1-b.y0 + 2*PAD + BAR };
+}
+function renderClara(W, H, Fr){
+  ctx.fillStyle = '#F1EDE3'; ctx.fillRect(Fr.x, Fr.y, Fr.w, Fr.h);
+  ctx.fillStyle = '#A8935B'; ctx.fillRect(Fr.x, Fr.y + Fr.h - BAR, Fr.w, BAR);
+  const g = claraGeom(W, H);
+  ctx.strokeStyle = '#A8935B'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(g.dx, g.div[0]); ctx.lineTo(g.dx, g.div[1]); ctx.stroke();
+  drawGeom(g);
 }
 
-function renderCentral(W,H){
-  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
-  const c=inks(), sc=state.shscale;
-  drawShieldFit(curShieldImg(), W/2-190*sc, 40, 380*sc, 360*sc, 'center');
-  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  const {N:fN, F:fF, A:fA} = FONT.central;
-  const rN=fitRatio([[state.nome,fN],[state.funcao,fF]], W-180);
-  const rA=fitRatio([[state.end1,fA],[state.end2,fA],[state.end3,fA]], W-180);
-  ctx.fillStyle=c.name;
-  ctx.font=fitFont(fN,rN);
-  ctx.fillText(state.nome, W/2, 470);
-  ctx.font=fitFont(fF,rN);
-  ctx.fillStyle=c.sub;
-  ctx.fillText(state.funcao, W/2, 534);
-  // gold rule
-  ctx.strokeStyle='#A8935B'; ctx.lineWidth=4;
-  ctx.beginPath(); ctx.moveTo(W/2-260, 576); ctx.lineTo(W/2+260, 576); ctx.stroke();
-  ctx.fillStyle=c.addr;
-  ctx.font=fitFont(fA,rA);
-  const ay=648, lh=58;
-  ctx.fillText(state.end1, W/2, ay);
-  ctx.fillText(state.end2, W/2, ay+lh);
-  ctx.fillText(state.end3, W/2, ay+lh*2);
+// --- Centralizado: recorte justo nos quatro lados, simetrico ao centro
+function centralGeom(W, H){
+  const { N, F, A } = FONT.central, sc = state.shscale, cx = W/2, ay = 648, lh = 58;
+  const rN = fitRatio([[state.nome, N], [state.funcao, F]], W-180);
+  const rA = fitRatio(addrs().map(t => [t, A]), W-180);
+  const fN = fitFont(N, rN), fF = fitFont(F, rN), fA = fitFont(A, rA);
+  return {
+    shield: shieldRect(curShieldImg(), cx-190*sc, 40, 380*sc, 360*sc, 'center'), cx, rule: 576,
+    lines: [[state.nome, fN, cx, 470, 'center', 'name'], [state.funcao, fF, cx, 534, 'center', 'sub'],
+            [state.end1, fA, cx, ay, 'center', 'addr'], [state.end2, fA, cx, ay+lh, 'center', 'addr'],
+            [state.end3, fA, cx, ay+lh*2, 'center', 'addr']]
+  };
+}
+function frameCentral(W, H){
+  const g = centralGeom(W, H), b = textBox(g.lines);
+  addRect(b, g.shield);
+  addRect(b, { x: g.cx-260, y: g.rule-2, w: 520, h: 4 });
+  const half = Math.max(g.cx - b.x0, b.x1 - g.cx) + PAD;
+  return { x: g.cx-half, y: b.y0-PAD, w: 2*half, h: b.y1-b.y0 + 2*PAD };
+}
+function renderCentral(W, H, Fr){
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(Fr.x, Fr.y, Fr.w, Fr.h);
+  const g = centralGeom(W, H);
+  ctx.strokeStyle = '#A8935B'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(g.cx-260, g.rule); ctx.lineTo(g.cx+260, g.rule); ctx.stroke();
+  drawGeom(g);
 }
 
 function draw(){
-  const L0 = LAYOUTS[state.layout];
-  const L = expFrame(L0);
-  cv.width=L.w; cv.height=L.h;
-  ctx.clearRect(0,0,L.w,L.h);
-  L.render(L.w,L.h);
-  const e = expSize(L0);
+  const L = LAYOUTS[state.layout], F = frameOf(L);
+  cv.width = F.w; cv.height = F.h;
+  ctx.setTransform(1, 0, 0, 1, -F.x, -F.y);
+  L.render(L.w, L.h, F);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const e = expSize(L);
   document.getElementById('cap').textContent =
     L.label + ': ' + e.w + '×' + e.h + ' px na tela';
   markDirty();
@@ -515,11 +513,9 @@ function buildUI(){
 
 // Canvas final: a assinatura é REDESENHADA na resolução de saída
 // (texto rasterizado no tamanho final = letras nítidas, em vez de imagem encolhida).
-function exportCanvas(density){
-  const L = expFrame(LAYOUTS[state.layout]);
-  const e = expSize(LAYOUTS[state.layout]), d = density || 1;
-  const w = Math.round(e.w * d), h = Math.round(e.h * d);
-  if(w === L.w && h === L.h) return cv;
+function exportCanvas(){
+  const L = LAYOUTS[state.layout], F = frameOf(L);
+  const { w, h } = expSize(L);
   const c2 = document.createElement('canvas');
   c2.width = w; c2.height = h;
   const x2 = c2.getContext('2d');
@@ -528,9 +524,9 @@ function exportCanvas(density){
   const real = ctx;
   ctx = x2;                                  // as funções de desenho usam 'ctx'
   try{
-    ctx.setTransform(w / L.w, 0, 0, h / L.h, 0, 0);
-    ctx.clearRect(0, 0, L.w, L.h);
-    L.render(L.w, L.h);
+    const sx = w / F.w, sy = h / F.h;
+    ctx.setTransform(sx, 0, 0, sy, -F.x*sx, -F.y*sy);
+    L.render(L.w, L.h, F);
   } finally {
     ctx = real;
   }
